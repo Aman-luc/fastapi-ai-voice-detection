@@ -3,29 +3,37 @@ from pydantic import BaseModel
 import base64
 import uuid
 import os
-
-import librosa
-from torch import minimum
-from transformers import pipeline
 import numpy as np
+import librosa
+
+from transformers import pipeline
 
 app = FastAPI()
 
 UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
-# Load pretrained model (first run slow hoga – normal hai)
-classifier = pipeline(
-    "audio-classification",
-    model="superb/hubert-large-superb-er"
-)
+# 🔥 LAZY LOADING (RAM FIX)
+classifier = None
+
+def get_classifier():
+    global classifier
+    if classifier is None:
+        classifier = pipeline(
+            "audio-classification",
+            model="superb/hubert-large-superb-er"
+        )
+    return classifier
+
 
 class AudioRequest(BaseModel):
     audio_base64: str
 
+
 @app.get("/")
 def home():
     return {"status": "API is running"}
+
 
 @app.post("/detect-voice")
 def detect_voice(data: AudioRequest):
@@ -44,20 +52,20 @@ def detect_voice(data: AudioRequest):
         # 2️⃣ Load audio
         audio, sr = librosa.load(filepath, sr=16000)
 
-        # 🔥 Force minimum audio length (1 second padding)
-        min_length = sr  # 1 second = 16000 samples
-        min_length = sr  # 1 second = 16000 samples
+        # 🔥 Force minimum audio length (1 sec padding)
+        min_length = sr
         if len(audio) < min_length:
-               pad_width = min_length - len(audio)
-               audio = np.pad(audio, (0, pad_width))
+            pad_width = min_length - len(audio)
+            audio = np.pad(audio, (0, pad_width))
 
-        # 3️⃣ Run AI model
-        result = classifier(audio)[0]
+        # 3️⃣ Load model ONLY when needed
+        clf = get_classifier()
+        result = clf(audio)[0]
 
         raw_label = result["label"].lower()
         confidence = float(result["score"])
 
-        # 4️⃣ SIMPLE mapping (ye hi wo confusing part tha)
+        # 4️⃣ Simple mapping
         if "synthetic" in raw_label or "spoof" in raw_label:
             prediction = "AI_GENERATED"
         else:
